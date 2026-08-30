@@ -4,25 +4,21 @@
 
 # FALHA 1: tag "latest" nao fixada -> build nao reprodutivel e pode
 # puxar uma imagem base com vulnerabilidades novas sem aviso.
-FROM python:latest
+FROM python:3.12-slim
 
-# FALHA 2: executando como root (nenhum USER definido).
 WORKDIR /app
 
-COPY requirements.txt .
+RUN groupadd -r taskflow && useradd -r -g taskflow taskflow
 
-# FALHA 3: nenhuma verificacao de integridade / hash das dependencias.
-RUN pip install -r requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# FALHA 4: segredo passado como ARG/ENV fica gravado nas camadas
-# da imagem e pode ser extraido com "docker history".
-ENV ADMIN_PASSWORD=admin123
+RUN chown -R taskflow:taskflow /app
 
-# FALHA 5: expondo a porta do servidor de desenvolvimento do Flask,
-# que nao e apto para producao.
+USER taskflow
+
 EXPOSE 5000
 
-# FALHA 6: container roda com debug habilitado e como root.
 CMD ["python", "app.py"]
