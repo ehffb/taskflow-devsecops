@@ -7,10 +7,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 
-# Correção: SECRET_KEY obtido de variável de ambiente com valor seguro de fallback
-app.config["SECRET_KEY"] = os.environ.get(
-    "TASKFLOW_SECRET_KEY", "chave-temporaria-dev-mude-em-producao"
-)
+# SECRET_KEY obtida da variavel de ambiente
+app.config["SECRET_KEY"] = os.environ.get("TASKFLOW_SECRET_KEY", "dev-key-change-in-prod")
 
 DATABASE = "taskflow.db"
 
@@ -54,7 +52,6 @@ def init_db():
 
     cur = db.execute("SELECT COUNT(*) AS total FROM users")
     if cur.fetchone()["total"] == 0:
-        # Correção: Armazenando hashes das senhas em vez de texto puro
         db.execute(
             "INSERT INTO users (username, password) VALUES (?, ?)",
             ("admin", generate_password_hash("admin123")),
@@ -80,12 +77,10 @@ def login():
         username = request.form["username"]
         password = request.form["password"]
 
-        # Correção: Query parametrizada contra SQL Injection
         db = get_db()
         cur = db.execute("SELECT * FROM users WHERE username = ?", (username,))
         user = cur.fetchone()
 
-        # Correção: Validação segura por hash de senha
         if user and check_password_hash(user["password"], password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
@@ -119,7 +114,6 @@ def tasks():
     db = get_db()
 
     if search:
-        # Correção: Query parametrizada na busca de tarefas
         like_pattern = f"%{search}%"
         rows = db.execute(
             "SELECT * FROM tasks WHERE user_id = ? AND title LIKE ?",
@@ -132,7 +126,6 @@ def tasks():
 
     items = ""
     for row in rows:
-        # Correção: Uso de html.escape para prevenir Stored XSS
         safe_title = html.escape(str(row["title"]))
         safe_desc = html.escape(str(row["description"] or ""))
         done_status = " (feita)" if row["done"] else ""
@@ -182,5 +175,4 @@ def new_task():
 if __name__ == "__main__":
     with app.app_context():
         init_db()
-    # Correção: Desativado modo debug para prevenir RCE em produção
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=5000, debug=False)
