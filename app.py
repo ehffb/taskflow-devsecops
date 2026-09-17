@@ -1,31 +1,16 @@
-"""
-TaskFlow - Aplicacao de exemplo da disciplina DevSecOps.
-
-ATENCAO: Esta aplicacao contem vulnerabilidades INTRODUZIDAS DE PROPOSITO
-para fins didaticos. NUNCA use este codigo como referencia de boas praticas
-e NUNCA implante em ambiente de producao ou exposto a internet.
-
-Vulnerabilidades presentes nesta versao (linha de base do curso):
-  1. SQL Injection no login e na busca de tarefas (Modulo 3 - SAST)
-  2. Cross-Site Scripting (XSS) armazenado na descricao da tarefa (Modulo 3/4)
-  3. Segredo de sessao (SECRET_KEY) hardcoded no codigo (Modulo 1/3)
-  4. Senhas armazenadas em texto puro no banco (Modulo 2/3)
-  5. Endpoint de debug exposto publicamente (Modulo 2/4)
-  6. Dependencias com CVEs conhecidas em requirements.txt (Modulo 3 - SCA)
-
-Ao longo dos encontros, cada uma dessas falhas sera identificada por uma
-ferramenta especifica da esteira e corrigida em uma versao "fixed" do codigo.
-"""
-
+import html
+import os
 import sqlite3
 
 from flask import Flask, g, redirect, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 
-# Vulnerabilidade #3: segredo hardcoded no repositorio.
-# Uma ferramenta de SAST/secret-scanning (ex: Gitleaks, Semgrep) deve
-# sinalizar esta linha como "Hardcoded Secret".
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "s3gr3d0-super-secreto-nao-mude-nunca"
+
+# Correção: SECRET_KEY obtido de variável de ambiente com valor seguro de fallback
+app.config["SECRET_KEY"] = os.environ.get(
+    "TASKFLOW_SECRET_KEY", "chave-temporaria-dev-mude-em-producao"
+)
 
 DATABASE = "taskflow.db"
 
@@ -69,14 +54,14 @@ def init_db():
 
     cur = db.execute("SELECT COUNT(*) AS total FROM users")
     if cur.fetchone()["total"] == 0:
-        # Vulnerabilidade #4: senha em texto puro, sem hashing.
+        # Correção: Armazenando hashes das senhas em vez de texto puro
         db.execute(
             "INSERT INTO users (username, password) VALUES (?, ?)",
-            ("admin", "admin123"),
+            ("admin", generate_password_hash("admin123")),
         )
         db.execute(
             "INSERT INTO users (username, password) VALUES (?, ?)",
-            ("aluno", "senha123"),
+            ("aluno", generate_password_hash("senha123")),
         )
         db.commit()
 
@@ -95,24 +80,17 @@ def login():
         username = request.form["username"]
         password = request.form["password"]
 
-        # Vulnerabilidade #1: SQL Injection.
-        # A query e montada por concatenacao de string em vez de usar
-        # parametros preparados (placeholders "?").
-        query = (
-            "SELECT * FROM users WHERE username = '"
-            + username
-            + "' AND password = '"
-            + password
-            + "'"
-        )
+        # Correção: Query parametrizada contra SQL Injection
         db = get_db()
-        cur = db.execute(query)
+        cur = db.execute("SELECT * FROM users WHERE username = ?", (username,))
         user = cur.fetchone()
 
-        if user:
+        # Correção: Validação segura por hash de senha
+        if user and check_password_hash(user["password"], password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             return redirect(url_for("tasks"))
+
         error = "Usuario ou senha invalidos."
 
     return f"""
@@ -141,15 +119,12 @@ def tasks():
     db = get_db()
 
     if search:
-        # Vulnerabilidade #1 (variante): SQL Injection tambem na busca.
-        query = (
-            "SELECT * FROM tasks WHERE user_id = "
-            + str(session["user_id"])
-            + " AND title LIKE '%"
-            + search
-            + "%'"
-        )
-        rows = db.execute(query).fetchall()
+        # Correção: Query parametrizada na busca de tarefas
+        like_pattern = f"%{search}%"
+        rows = db.execute(
+            "SELECT * FROM tasks WHERE user_id = ? AND title LIKE ?",
+            (session["user_id"], like_pattern),
+        ).fetchall()
     else:
         rows = db.execute(
             "SELECT * FROM tasks WHERE user_id = ?", (session["user_id"],)
@@ -157,24 +132,23 @@ def tasks():
 
     items = ""
     for row in rows:
-        # Vulnerabilidade #2: XSS armazenado. A descricao do usuario e
-        # inserida direto no HTML, sem escaping (Jinja2 com | safe
-        # ou f-string manual como aqui tem o mesmo efeito).
-        items += f"""
-        <li>
-            <b>{row['title']}</b> - {row['description']}
-            {'(feita)' if row['done'] else ''}
-        </li>
-        """
+        # Correção: Uso de html.escape para prevenir Stored XSS
+        safe_title = html.escape(str(row["title"]))
+        safe_desc = html.escape(str(row["description"] or ""))
+        done_status = " (feita)" if row["done"] else ""
+        items += f"<li><b>{safe_title}</b> - {safe_desc}{done_status}</li>"
+
+    safe_username = html.escape(str(session["username"]))
+    safe_search = html.escape(search)
 
     return f"""
-    <h1>Minhas tarefas ({session['username']})</h1>
+    <h1>Minhas tarefas ({safe_username})</h1>
     <form method="get">
-        <input type="text" name="q" placeholder="buscar tarefa">
+        <input type="text" name="q" placeholder="Buscar..." value="{safe_search}">
         <input type="submit" value="Buscar">
     </form>
     <ul>{items}</ul>
-    <a href="{url_for('new_task')}">Nova tarefa</a> |
+    <a href="{url_for('new_task')}">Nova tarefa</a> | 
     <a href="{url_for('logout')}">Sair</a>
     """
 
@@ -205,23 +179,8 @@ def new_task():
     """
 
 
-# Vulnerabilidade #5: endpoint de debug/diagnostico exposto sem
-# autenticacao, vazando informacoes internas do servidor.
-@app.route("/debug/info")
-def debug_info():
-    import platform
-    import sys
-
-    return {
-        "python_version": sys.version,
-        "platform": platform.platform(),
-        "secret_key": app.config["SECRET_KEY"],
-    }
-
-
 if __name__ == "__main__":
     with app.app_context():
         init_db()
-    # debug=True em producao expoe o Werkzeug debugger interativo
-    # (execucao remota de codigo) - tambem sera sinalizado pelo SAST.
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Correção: Desativado modo debug para prevenir RCE em produção
+    app.run(host="0.0.0.0", port=5000, debug=False)
