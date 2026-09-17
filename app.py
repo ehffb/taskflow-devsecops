@@ -1,14 +1,13 @@
-import html
 import os
 import sqlite3
 
-from flask import Flask, g, redirect, request, session, url_for
+from flask import Flask, g, redirect, render_template_string, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 
-# SECRET_KEY obtida da variavel de ambiente
-app.config["SECRET_KEY"] = os.environ.get("TASKFLOW_SECRET_KEY", "dev-key-change-in-prod")
+# Secret Key obtida exclusivamente do ambiente
+app.config["SECRET_KEY"] = os.environ.get("TASKFLOW_SECRET_KEY")
 
 DATABASE = "taskflow.db"
 
@@ -88,15 +87,16 @@ def login():
 
         error = "Usuario ou senha invalidos."
 
-    return f"""
+    tpl = """
     <h1>TaskFlow - Login</h1>
     <form method="post">
         Usuario: <input type="text" name="username"><br>
         Senha: <input type="password" name="password"><br>
         <input type="submit" value="Entrar">
     </form>
-    <p style="color:red">{error or ""}</p>
+    {% if error %}<p style="color:red">{{ error }}</p>{% endif %}
     """
+    return render_template_string(tpl, error=error)
 
 
 @app.route("/logout")
@@ -124,26 +124,23 @@ def tasks():
             "SELECT * FROM tasks WHERE user_id = ?", (session["user_id"],)
         ).fetchall()
 
-    items = ""
-    for row in rows:
-        safe_title = html.escape(str(row["title"]))
-        safe_desc = html.escape(str(row["description"] or ""))
-        done_status = " (feita)" if row["done"] else ""
-        items += f"<li><b>{safe_title}</b> - {safe_desc}{done_status}</li>"
-
-    safe_username = html.escape(str(session["username"]))
-    safe_search = html.escape(search)
-
-    return f"""
-    <h1>Minhas tarefas ({safe_username})</h1>
+    tpl = """
+    <h1>Minhas tarefas ({{ username }})</h1>
     <form method="get">
-        <input type="text" name="q" placeholder="Buscar..." value="{safe_search}">
+        <input type="text" name="q" placeholder="Buscar..." value="{{ search }}">
         <input type="submit" value="Buscar">
     </form>
-    <ul>{items}</ul>
-    <a href="{url_for('new_task')}">Nova tarefa</a> | 
-    <a href="{url_for('logout')}">Sair</a>
+    <ul>
+    {% for row in rows %}
+        <li><b>{{ row['title'] }}</b> - {{ row['description'] or '' }}{% if row['done'] %} (feita){% endif %}</li>
+    {% endfor %}
+    </ul>
+    <a href="{{ url_for('new_task') }}">Nova tarefa</a> | 
+    <a href="{{ url_for('logout') }}">Sair</a>
     """
+    return render_template_string(
+        tpl, username=session.get("username", ""), search=search, rows=rows
+    )
 
 
 @app.route("/tasks/new", methods=["GET", "POST"])
@@ -162,7 +159,7 @@ def new_task():
         db.commit()
         return redirect(url_for("tasks"))
 
-    return """
+    tpl = """
     <h1>Nova tarefa</h1>
     <form method="post">
         Titulo: <input type="text" name="title"><br>
@@ -170,6 +167,7 @@ def new_task():
         <input type="submit" value="Salvar">
     </form>
     """
+    return render_template_string(tpl)
 
 
 if __name__ == "__main__":
